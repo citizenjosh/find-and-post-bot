@@ -131,5 +131,7 @@ def post_to_reddit(article):
     submission = subreddit.submit(title=title, selftext=body)
 
     if flair:
-        for f in subreddit.flair.link_templates:
-            if f['te]()
+    for f in subreddit.flair.link_templates:
+        if f['text'] == flair:
+            submission.flair.select(f['id'])
+            break
