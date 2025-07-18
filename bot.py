@@ -37,13 +37,20 @@ reddit = praw.Reddit(
 )
 
 
-def extract_original_url(google_news_url):
-    """Extract original URL from Google News redirect."""
-    parsed = urllib.parse.urlparse(google_news_url)
+def extract_original_url(entry):
+    # Try to extract from URL param
+    parsed = urllib.parse.urlparse(entry.link)
     query = urllib.parse.parse_qs(parsed.query)
     if 'url' in query:
         return query['url'][0]
-    return google_news_url
+
+    # Fallback: try to extract from summary if it contains an <a href>
+    match = re.search(r'href="(https://[^"]+)"', entry.summary)
+    if match:
+        return match.group(1)
+
+    # Fallback: return original link
+    return entry.link
 
 
 def strip_html(text):
@@ -58,7 +65,7 @@ def fetch_google_news():
     feed = feedparser.parse(url)
     articles = []
     for entry in feed.entries:
-        clean_link = extract_original_url(entry.link)
+        clean_link = extract_original_url(entry)
         clean_summary = strip_html(entry.summary)
         articles.append({
             'title': entry.title,
