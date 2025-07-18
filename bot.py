@@ -40,18 +40,25 @@ reddit = praw.Reddit(
 
 
 def extract_original_url(entry):
-    """Extract original URL from Google News redirect or summary"""
+    """
+    Extract the clean article URL from a Google News RSS entry.
+    Priority:
+    1. 'url' query param in entry.link
+    2. <a href="..."> in entry.summary
+    3. entry.link (last resort, Google redirect)
+    """
+    # 1️⃣ Check for url= param in link
     parsed = urllib.parse.urlparse(entry.link)
     query = urllib.parse.parse_qs(parsed.query)
     if 'url' in query:
         return query['url'][0]
 
-    # Fallback: try to extract from summary if it contains an <a href>
-    match = re.search(r'href="(https://[^"]+)"', entry.summary)
-    if match:
-        return match.group(1)
+    # 2️⃣ Look for <a href="…"> in the summary
+    href_match = re.search(r'<a href="(https?://[^"]+)"', entry.summary)
+    if href_match:
+        return href_match.group(1)
 
-    # Fallback: return original link
+    # 3️⃣ fallback: Google redirect
     return entry.link
 
 
