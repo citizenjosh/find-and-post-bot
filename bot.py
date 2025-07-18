@@ -1,7 +1,9 @@
+
 import os
 import praw
-import requests
+import openai
 import feedparser
+import urllib.parse
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -12,6 +14,9 @@ REDDIT_CLIENT_SECRET = os.getenv("REDDIT_CLIENT_SECRET")
 REDDIT_USERNAME = os.getenv("REDDIT_USERNAME")
 REDDIT_PASSWORD = os.getenv("REDDIT_PASSWORD")
 USER_AGENT = os.getenv("USER_AGENT")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+openai.api_key = OPENAI_API_KEY
+
 SUBREDDIT = "llmsecurity"
 MAX_POSTS = 3
 DISCLAIMER = "*Automated post. Please discuss below.*"
@@ -29,14 +34,23 @@ reddit = praw.Reddit(
     user_agent=USER_AGENT
 )
 
+def extract_original_url(google_news_url):
+    parsed = urllib.parse.urlparse(google_news_url)
+    query = urllib.parse.parse_qs(parsed.query)
+    if 'url' in query:
+        return query['url'][0]
+    else:
+        return google_news_url
+
 def fetch_google_news():
     url = "https://news.google.com/rss/search?q=LLM+security+OR+%22large+language+model%22+security&hl=en-US&gl=US&ceid=US:en"
     feed = feedparser.parse(url)
     articles = []
     for entry in feed.entries:
+        clean_link = extract_original_url(entry.link)
         articles.append({
             'title': entry.title,
-            'link': entry.link,
+            'link': clean_link,
             'summary': entry.summary,
             'source': 'news'
         })
@@ -65,12 +79,32 @@ def deduplicate(articles):
             unique.append(art)
     return unique
 
+def summarize_with_gpt(text):
+    prompt = (
+        "Summarize the following text into 1–2 clear, concise sentences suitable for a Reddit post, "
+        "highlighting why it’s relevant to large language model (LLM) security:\n\n"
+        f"{text}"
+    )
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=150,
+            temperature=0.3,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"Error summarizing with GPT: {e}")
+        return text
+
 def post_to_reddit(article):
     subreddit = reddit.subreddit(SUBREDDIT)
     flair = FLAIR_MAP.get(article['source'], None)
 
+    gpt_summary = summarize_with_gpt(article['summary'])
+
     title = f"{article['title']}"
-    body = f"[Read the article here]({article['link']})\n\n{article['summary']}\n\n{DISCLAIMER}"
+    body = f"[Read the article here]({article['link']})\n\n{gpt_summary}\n\n{DISCLAIMER}"
 
     submission = subreddit.submit(title=title, selftext=body)
 
