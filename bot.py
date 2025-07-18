@@ -1,11 +1,11 @@
 import os
 import praw
-import openai
 import feedparser
 import urllib.parse
 import re
 from datetime import datetime
 from dotenv import load_dotenv
+from openai import OpenAI
 
 # Load env variables
 load_dotenv()
@@ -16,7 +16,9 @@ REDDIT_USERNAME = os.getenv("REDDIT_USERNAME")
 REDDIT_PASSWORD = os.getenv("REDDIT_PASSWORD")
 USER_AGENT = os.getenv("USER_AGENT")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-openai.api_key = OPENAI_API_KEY
+
+# OpenAI client
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Constants
 SUBREDDIT = "llmsecurity"
@@ -38,7 +40,7 @@ reddit = praw.Reddit(
 
 
 def extract_original_url(entry):
-    # Try to extract from URL param
+    """Extract original URL from Google News redirect or summary"""
     parsed = urllib.parse.urlparse(entry.link)
     query = urllib.parse.parse_qs(parsed.query)
     if 'url' in query:
@@ -111,7 +113,7 @@ def summarize_with_gpt(text):
         f"{text}"
     )
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=150,
@@ -128,7 +130,6 @@ def post_to_reddit(article):
     subreddit = reddit.subreddit(SUBREDDIT)
     flair = FLAIR_MAP.get(article['source'], None)
 
-    # Clean and summarize
     summary_text = strip_html(article['summary'])
     gpt_summary = summarize_with_gpt(summary_text)
 
@@ -142,6 +143,7 @@ def post_to_reddit(article):
             if f['text'] == flair:
                 submission.flair.select(f['id'])
                 break
+
     print(f"✅ Posted: {title}")
 
 
