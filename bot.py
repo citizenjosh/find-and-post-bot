@@ -135,3 +135,18 @@ def post_to_reddit(article):
             if f['text'] == flair:
                 submission.flair.select(f['id'])
                 break
+    print(f"✅ Posted: {title}")
+
+
+if __name__ == "__main__":
+    print(f"\n--- Running bot at {datetime.utcnow()} UTC ---")
+    news = fetch_google_news()
+    research = fetch_arxiv()
+    combined = deduplicate(news + research)
+
+    if not combined:
+        print("ℹ️ No unique articles found today. Skipping.")
+    else:
+        for article in combined[:MAX_POSTS]:
+            post_to_reddit(article)
+    print("--- Done ---")
