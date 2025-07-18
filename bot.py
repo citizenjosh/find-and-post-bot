@@ -1,12 +1,13 @@
-
 import os
 import praw
 import openai
 import feedparser
 import urllib.parse
+import re
 from datetime import datetime
 from dotenv import load_dotenv
 
+# Load env variables
 load_dotenv()
 
 REDDIT_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID")
@@ -17,6 +18,7 @@ USER_AGENT = os.getenv("USER_AGENT")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai.api_key = OPENAI_API_KEY
 
+# Constants
 SUBREDDIT = "llmsecurity"
 MAX_POSTS = 3
 DISCLAIMER = "*Automated post. Please discuss below.*"
@@ -34,13 +36,22 @@ reddit = praw.Reddit(
     user_agent=USER_AGENT
 )
 
+
 def extract_original_url(google_news_url):
+    """Extract original URL from Google News redirect."""
     parsed = urllib.parse.urlparse(google_news_url)
     query = urllib.parse.parse_qs(parsed.query)
     if 'url' in query:
         return query['url'][0]
-    else:
-        return google_news_url
+    return google_news_url
+
+
+def strip_html(text):
+    """Remove HTML tags and decode basic entities."""
+    text = re.sub(r'<.*?>', '', text)
+    text = re.sub(r'&[a-z]+;', '', text)
+    return text.strip()
+
 
 def fetch_google_news():
     url = "https://news.google.com/rss/search?q=LLM+security+OR+%22large+language+model%22+security&hl=en-US&gl=US&ceid=US:en"
@@ -48,38 +59,45 @@ def fetch_google_news():
     articles = []
     for entry in feed.entries:
         clean_link = extract_original_url(entry.link)
+        clean_summary = strip_html(entry.summary)
         articles.append({
             'title': entry.title,
             'link': clean_link,
-            'summary': entry.summary,
+            'summary': clean_summary,
             'source': 'news'
         })
     return articles
+
 
 def fetch_arxiv():
     url = "http://export.arxiv.org/api/query?search_query=all:large+language+model+security&start=0&max_results=5&sortBy=lastUpdatedDate&sortOrder=descending"
     feed = feedparser.parse(url)
     papers = []
     for entry in feed.entries:
+        clean_summary = strip_html(entry.summary.replace('\n', ' '))
         papers.append({
             'title': entry.title.replace('\n', ' ').strip(),
             'link': entry.link,
-            'summary': entry.summary.replace('\n', ' ').strip(),
+            'summary': clean_summary,
             'source': 'research'
         })
     return papers
 
+
 def deduplicate(articles):
+    """Deduplicate based on lowercase title."""
     unique = []
     seen_titles = set()
     for art in articles:
-        title_key = art['title'].lower().strip()
-        if title_key not in seen_titles:
-            seen_titles.add(title_key)
+        key = art['title'].lower().strip()
+        if key not in seen_titles:
+            seen_titles.add(key)
             unique.append(art)
     return unique
 
+
 def summarize_with_gpt(text):
+    """Use GPT to generate a clean, concise summary."""
     prompt = (
         "Summarize the following text into 1–2 clear, concise sentences suitable for a Reddit post, "
         "highlighting why it’s relevant to large language model (LLM) security:\n\n"
@@ -92,42 +110,26 @@ def summarize_with_gpt(text):
             max_tokens=150,
             temperature=0.3,
         )
-        return response.choices[0].message.content.strip()
+        summary = response.choices[0].message.content.strip()
+        return strip_html(summary)
     except Exception as e:
         print(f"Error summarizing with GPT: {e}")
         return text
+
 
 def post_to_reddit(article):
     subreddit = reddit.subreddit(SUBREDDIT)
     flair = FLAIR_MAP.get(article['source'], None)
 
-    gpt_summary = summarize_with_gpt(article['summary'])
+    # Clean and summarize
+    summary_text = strip_html(article['summary'])
+    gpt_summary = summarize_with_gpt(summary_text)
 
-    title = f"{article['title']}"
+    title = article['title']
     body = f"[Read the article here]({article['link']})\n\n{gpt_summary}\n\n{DISCLAIMER}"
 
     submission = subreddit.submit(title=title, selftext=body)
 
     if flair:
-        flair_id = None
         for f in subreddit.flair.link_templates:
-            if f['text'] == flair:
-                flair_id = f['id']
-                break
-        if flair_id:
-            submission.flair.select(flair_id)
-
-    print(f"Posted: {title}")
-
-if __name__ == "__main__":
-    print(f"\n--- Running bot at {datetime.utcnow()} UTC ---")
-    news = fetch_google_news()
-    research = fetch_arxiv()
-    combined = deduplicate(news + research)
-
-    if not combined:
-        print("No unique articles found today. Skipping.")
-    else:
-        for article in combined[:MAX_POSTS]:
-            post_to_reddit(article)
-    print("--- Done ---")
+            if f['te]()
