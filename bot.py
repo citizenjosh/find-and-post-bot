@@ -68,8 +68,11 @@ def deduplicate(articles):
 def post_to_reddit(article):
     subreddit = reddit.subreddit(SUBREDDIT)
     flair = FLAIR_MAP.get(article['source'], None)
+
     title = f"{article['title']}"
-    submission = subreddit.submit(title=title, url=article['link'], resubmit=False)
+    body = f"[Read the article here]({article['link']})\n\n{article['summary']}\n\n{DISCLAIMER}"
+
+    submission = subreddit.submit(title=title, selftext=body)
 
     if flair:
         flair_id = None
@@ -87,6 +90,7 @@ if __name__ == "__main__":
     news = fetch_google_news()
     research = fetch_arxiv()
     combined = deduplicate(news + research)
+
     if not combined:
         print("No unique articles found today. Skipping.")
     else:
