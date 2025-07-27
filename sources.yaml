@@ -1,8 +1,10 @@
 - name: google-news
   type: news
+  url: "https://news.google.com/rss/search?q=LLM+security+OR+%22large+language+model%22+security&hl=en-US&gl=US&ceid=US:en"
 
 - name: arxiv-llm-security
   type: research
+  url: "http://export.arxiv.org/api/query?search_query=all:large+language+model+security&start=0&max_results=5&sortBy=lastUpdatedDate&sortOrder=descending"
 
 - name: reddit-llm-search
   type: reddit-search
