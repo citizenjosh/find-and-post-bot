@@ -1,5 +1,5 @@
 praw
-requests
 feedparser
 python-dotenv
 openai
+pyyaml
