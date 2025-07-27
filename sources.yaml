@@ -1,0 +1,11 @@
+google_news:
+  enabled: true
+  query: "LLM security OR 'large language model' security"
+  rss_url: "https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
+  type: news
+
+arxiv:
+  enabled: true
+  query: "large language model security"
+  rss_url: "http://export.arxiv.org/api/query?search_query=all:{query}&start=0&max_results=5&sortBy=lastUpdatedDate&sortOrder=descending"
+  type: research
