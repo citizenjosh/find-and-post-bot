@@ -1,9 +1,9 @@
-name: Run find-and-post-bot
+name: Daily Find-and-Post Bot (Randomized)
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: '0 14 * * *'  # every day at 2pm UTC
+    - cron: '0 * * * *'    # at minute 0, every hour
+  workflow_dispatch:
 
 jobs:
   run-bot:
@@ -23,12 +23,47 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run bot
+      - name: Determine if this is today's random run hour
+        id: gate
+        run: |
+          # Pick a pseudo-random hour 0–23, seeded by today's date
+          RUN_HOUR=$(python3 - << 'EOF'
+import datetime, random
+random.seed(datetime.date.today().isoformat())
+# between 8 & 14:00 Eastern
+print(random.randint(12,18))
+EOF
+          )
+          echo "Today's scheduled hour: $RUN_HOUR UTC"
+          NOW=$(date -u +'%H')
+          echo "Current hour: $NOW UTC"
+          if [ "$NOW" != "$RUN_HOUR" ]; then
+            echo "❌ Not our hour—skipping run."
+            exit 0
+          fi
+          echo "✅ It's our hour—continuing."
+
+      - name: Install Chrome & ChromeDriver
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget unzip xvfb libxi6 libgconf-2-4
+          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" \
+            > /etc/apt/sources.list.d/google.list'
+          sudo apt-get update && sudo apt-get install -y google-chrome-stable
+          LATEST=$(curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE)
+          wget -qO /tmp/chromedriver.zip \
+            "https://chromedriver.storage.googleapis.com/$LATEST/chromedriver_linux64.zip"
+          unzip /tmp/chromedriver.zip -d chromedriver
+          sudo mv chromedriver/chromedriver /usr/local/bin/
+
+      - name: Run bot via Selenium
         env:
-          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_ID:     ${{ secrets.REDDIT_CLIENT_ID }}
           REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
-          REDDIT_USERNAME: ${{ secrets.REDDIT_USERNAME }}
-          REDDIT_PASSWORD: ${{ secrets.REDDIT_PASSWORD }}
-          USER_AGENT: ${{ secrets.USER_AGENT }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: python bot.py
+          REDDIT_USERNAME:      ${{ secrets.REDDIT_USERNAME }}
+          REDDIT_PASSWORD:      ${{ secrets.REDDIT_PASSWORD }}
+          USER_AGENT:           ${{ secrets.USER_AGENT }}
+          OPENAI_API_KEY:       ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          xvfb-run python bot.py
