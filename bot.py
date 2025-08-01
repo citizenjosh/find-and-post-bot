@@ -1,126 +1,150 @@
+# bot.py
 import os
-import re
+import time
+import random
 import yaml
-import praw
 import feedparser
 import urllib.parse
-from openai import OpenAI
-from datetime import datetime
+import re
 from dotenv import load_dotenv
+from datetime import datetime
+from openai import OpenAI
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
 
-# ── Load secrets & configs ────────────────────────────────────────────────────
+# ── Load env & configs ─────────────────────────────────────────────────────────
 load_dotenv()
-openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+openai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-with open("config.yaml") as f:
-    config = yaml.safe_load(f)
-
-with open("sources.yaml") as f:
-    sources = yaml.safe_load(f)
-
-reddit = praw.Reddit(
-    client_id=os.getenv("REDDIT_CLIENT_ID"),
-    client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
-    username=os.getenv("REDDIT_USERNAME"),
-    password=os.getenv("REDDIT_PASSWORD"),
-    user_agent=os.getenv("USER_AGENT"),
-)
+with open("config.yaml")  as f: config  = yaml.safe_load(f)
+with open("sources.yaml") as f: sources = yaml.safe_load(f)
 
 SUBREDDIT    = config["subreddit"]
 MAX_POSTS    = config["max_posts"]
 DISCLAIMER   = config["disclaimer"]
-FLAIR_MAP    = config["flairs"]
+FLAIR_MAP    = config.get("flairs", {})
 PROMPT       = config["prompt_template"]
 
-
 # ── Helpers ─────────────────────────────────────────────────────────────────────
-def strip_html(text: str) -> str:
+def strip_html(text):  
     return re.sub(r"<[^>]+>", "", text).strip()
 
-def summarize_with_gpt(text: str) -> str:
+def summarize_with_gpt(text):
+    prompt = PROMPT.format(content=text)
     try:
-        resp = openai_client.chat.completions.create(
+        r = openai.chat.completions.create(
             model="gpt-3.5-turbo",
-            messages=[{"role":"user","content": PROMPT.format(content=text)}],
-            max_tokens=150,
-            temperature=0.3,
+            messages=[{"role":"user","content":prompt}],
+            max_tokens=150, temperature=0.3
         )
-        return strip_html(resp.choices[0].message.content)
+        return strip_html(r.choices[0].message.content)
     except Exception as e:
         print("GPT error:", e)
         return text
 
-def post_to_reddit(item: dict):
-    sr = reddit.subreddit(SUBREDDIT)
-    summary = summarize_with_gpt(item["summary"])
-    body    = f"[Read more]({item['link']})\n\n{summary}\n\n{DISCLAIMER}"
-    submission = sr.submit(title=item["title"], selftext=body)
-    flair_name = FLAIR_MAP.get(item["source"])
-    if flair_name:
-        for template in sr.flair.link_templates:
-            if template["text"] == flair_name:
-                submission.flair.select(template["id"])
-                break
-    print("✅", item["title"])
+def type_like_human(elem, text):
+    for c in text:
+        elem.send_keys(c)
+        time.sleep(random.uniform(0.05, 0.18))
 
-# ── Source Fetchers ─────────────────────────────────────────────────────────────
-def fetch_rss(source: dict) -> list:
-    feed = feedparser.parse(source["url"])
-    items = []
+# ── Fetchers (unchanged) ────────────────────────────────────────────────────────
+def extract_original_url(u):
+    p = urllib.parse.urlparse(u)
+    q = urllib.parse.parse_qs(p.query)
+    return q.get("url",[u])[0]
+
+def fetch_rss(src):
+    feed = feedparser.parse(src["url"])
+    out = []
     for e in feed.entries:
-        link = e.link
-        if source["type"] == "news":  # strip Google’s redirect if present
-            q = urllib.parse.parse_qs(urllib.parse.urlparse(link).query)
-            link = q.get("url", [link])[0]
-        items.append({
+        link = extract_original_url(e.link) if src["type"]=="news" else e.link
+        out.append({
             "title":   e.title.strip(),
-            "summary": strip_html(getattr(e, "summary", "")),
+            "summary": strip_html(getattr(e,"summary","")),
             "link":    link,
-            "source":  source["name"],
+            "source":  src["name"],
         })
-    return items
+    return out
 
-def fetch_reddit_search(source: dict) -> list:
-    q     = source["query"]
-    tf    = source.get("time_filter", "day")
-    excl  = {s.lower() for s in source.get("exclude_subreddits", [])}
-    items = []
-    for sub in reddit.subreddit(source.get("subreddit","all")) \
-                     .search(q, sort="new", time_filter=tf, limit=10):
-        if sub.subreddit.display_name.lower() in excl:
-            continue
-        items.append({
+def fetch_reddit_search(src):
+    q     = src["query"]
+    tf    = src.get("time_filter","day")
+    excl  = {s.lower() for s in src.get("exclude_subreddits",[])}
+    out   = []
+    for sub in reddit.subreddit("all").search(q,sort="new",time_filter=tf,limit=10):
+        if sub.subreddit.display_name.lower() in excl: continue
+        out.append({
             "title":   sub.title,
             "summary": strip_html(sub.selftext or sub.title),
             "link":    f"https://reddit.com{sub.permalink}",
-            "source":  source["name"],
+            "source":  src["name"],
         })
+    return out
+
+def collect_all():
+    items = []
+    for s in sources:
+        if s["type"] in ("news","research"):
+            items += fetch_rss(s)
+        elif s["type"]=="reddit-search":
+            items += fetch_reddit_search(s)
     return items
 
-# ── Core Loop ──────────────────────────────────────────────────────────────────
-def main():
-    print(f"--- Running at {datetime.utcnow()} UTC ---")
-    collected = []
+def dedupe(items):
+    seen, out = set(), []
+    for i in items:
+        k=i["title"].lower().strip()
+        if k not in seen:
+            seen.add(k); out.append(i)
+    return out
 
-    for src in sources:
-        typ = src["type"]
-        if typ in ("news","research"):
-            collected += fetch_rss(src)
-        elif typ == "reddit-search":
-            collected += fetch_reddit_search(src)
+# ── Selenium Uploader ────────────────────────────────────────────────────────────
+def post_via_ui(article):
+    # 1) Launch headless Chrome under Xvfb
+    opts = Options()
+    opts.add_argument("--headless")
+    opts.add_argument("--disable-gpu")
+    driver = webdriver.Chrome(service=ChromeDriverManager().install(), options=opts)
 
-    # dedupe by title
-    seen, unique = set(), []
-    for item in collected:
-        key = item["title"].lower().strip()
-        if key not in seen:
-            seen.add(key)
-            unique.append(item)
+    # 2) Go to Reddit submit page for text post
+    driver.get(f"https://www.reddit.com/r/{SUBREDDIT}/submit/?type=self")
 
-    for article in unique[:MAX_POSTS]:
-        post_to_reddit(article)
+    time.sleep(3)  # wait for page & login
+    
+    # 3) Fill Title
+    title_el = driver.find_element(By.CSS_SELECTOR, "textarea[name='title']")
+    type_like_human(title_el, article["title"])
 
+    # 4) Fill Body
+    body_el = driver.find_element(By.CSS_SELECTOR, "div[role='textbox']")
+    summary = summarize_with_gpt(article["summary"])
+    body_text = f"[Read more]({article['link']})\n\n{summary}\n\n{DISCLAIMER}"
+    type_like_human(body_el, body_text)
+
+    # 5) (Optional) set flair
+    flair_text = FLAIR_MAP.get(article["source"])
+    if flair_text:
+        # open flair menu
+        driver.find_element(By.CSS_SELECTOR, "button[id*='PostFlair']").click()
+        time.sleep(1)
+        # select by visible text
+        flair_el = driver.find_element(By.XPATH, f"//span[text()='{flair_text}']")
+        flair_el.click()
+
+    time.sleep(1)
+    # 6) Submit
+    submit_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
+    submit_btn.click()
+
+    print("✅ posted via UI:", article["title"])
+    driver.quit()
+
+# ── Main ────────────────────────────────────────────────────────────────────────
+if __name__=="__main__":
+    print("--- Running at", datetime.utcnow(), "UTC ---")
+    all_items = dedupe(collect_all())[:MAX_POSTS]
+    for art in all_items:
+        post_via_ui(art)
     print("--- Done ---")
-
-if __name__ == "__main__":
-    main()
